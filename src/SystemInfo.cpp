@@ -26,6 +26,18 @@ QString formatBytes(quint64 bytes)
     return QString::number(value, 'f', value >= 10.0 ? 1 : 2) + " " + units[unit];
 }
 
+QString SystemInfo::toText() const
+{
+    return QString("OS: %1\nArchitecture: %2\nCPU: %3\nLogical processors: %4\nRAM: %5 total / %6 available\nGPU: %7")
+        .arg(operatingSystem)
+        .arg(architecture)
+        .arg(cpu)
+        .arg(logicalProcessors)
+        .arg(formatBytes(totalMemoryBytes))
+        .arg(formatBytes(availableMemoryBytes))
+        .arg(graphics);
+}
+
 #ifdef Q_OS_WIN
 static QString detectGraphicsAdapter()
 {
