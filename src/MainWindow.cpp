@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "SystemInfo.h"
+#include "Telemetry.h"
 
 #include <QFont>
 #include <QGridLayout>
@@ -7,6 +8,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -14,13 +16,13 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle("MalachiteVR GameFix");
-    resize(900, 620);
-    setMinimumSize(760, 520);
+    resize(1000, 780);
+    setMinimumSize(860, 680);
 
     auto *central = new QWidget(this);
     auto *root = new QVBoxLayout(central);
     root->setContentsMargins(28, 24, 28, 24);
-    root->setSpacing(18);
+    root->setSpacing(16);
 
     auto *title = new QLabel("MalachiteVR GameFix", central);
     QFont titleFont = title->font();
@@ -31,29 +33,47 @@ MainWindow::MainWindow(QWidget *parent)
     auto *subtitle = new QLabel("Find out why your games are running poorly.", central);
     subtitle->setObjectName("subtitle");
 
-    auto *grid = new QGridLayout;
-    grid->setSpacing(14);
-
-    auto makeCard = [central, grid](int row, int column, const QString &heading, QLabel *&value) {
+    auto makeCard = [central](const QString &heading, QLabel *&value) {
         auto *box = new QGroupBox(heading, central);
         auto *layout = new QVBoxLayout(box);
         layout->setContentsMargins(16, 14, 16, 16);
         value = new QLabel("Detecting...", box);
         value->setWordWrap(true);
         QFont font = value->font();
-        font.setPointSize(13);
+        font.setPointSize(12);
         font.setBold(true);
         value->setFont(font);
         layout->addWidget(value);
-        grid->addWidget(box, row, column);
+        return box;
     };
 
-    makeCard(0, 0, "CPU", cpuValue_);
-    makeCard(0, 1, "GPU", gpuValue_);
-    makeCard(1, 0, "Memory", memoryValue_);
-    makeCard(1, 1, "Operating System", osValue_);
-    makeCard(2, 0, "Architecture", architectureValue_);
-    makeCard(2, 1, "GameFix Status", statusValue_);
+    auto *systemGrid = new QGridLayout;
+    systemGrid->setSpacing(12);
+    systemGrid->addWidget(makeCard("CPU", cpuValue_), 0, 0);
+    systemGrid->addWidget(makeCard("GPU", gpuValue_), 0, 1);
+    systemGrid->addWidget(makeCard("Memory", memoryValue_), 1, 0);
+    systemGrid->addWidget(makeCard("Operating System", osValue_), 1, 1);
+    systemGrid->addWidget(makeCard("Architecture", architectureValue_), 2, 0);
+    systemGrid->addWidget(makeCard("GameFix Status", statusValue_), 2, 1);
+
+    auto *telemetryTitle = new QLabel("Live Performance", central);
+    QFont telemetryFont = telemetryTitle->font();
+    telemetryFont.setPointSize(16);
+    telemetryFont.setBold(true);
+    telemetryTitle->setFont(telemetryFont);
+
+    auto *telemetrySubtitle = new QLabel(
+        "Updated every second. Values are read-only and are not sent anywhere.", central);
+    telemetrySubtitle->setObjectName("subtitle");
+
+    auto *telemetryGrid = new QGridLayout;
+    telemetryGrid->setSpacing(12);
+    telemetryGrid->addWidget(makeCard("CPU Usage", cpuUsageValue_), 0, 0);
+    telemetryGrid->addWidget(makeCard("GPU Usage", gpuUsageValue_), 0, 1);
+    telemetryGrid->addWidget(makeCard("RAM Usage", ramUsageValue_), 1, 0);
+    telemetryGrid->addWidget(makeCard("VRAM Usage", vramUsageValue_), 1, 1);
+    telemetryGrid->addWidget(makeCard("GPU Temperature", gpuTemperatureValue_), 2, 0);
+    telemetryGrid->addWidget(makeCard("Bottleneck Analysis", diagnosisValue_), 2, 1);
 
     auto *buttonRow = new QHBoxLayout;
     auto *refreshButton = new QPushButton("Refresh System Information", central);
@@ -62,12 +82,15 @@ MainWindow::MainWindow(QWidget *parent)
     buttonRow->addWidget(refreshButton);
     buttonRow->addWidget(diagnosticButton);
 
-    auto *footer = new QLabel("v0.1.0  •  Windows  •  Qt 6  •  C++20", central);
+    auto *footer = new QLabel("v0.2.0  •  Windows  •  Qt 6  •  C++20  •  Live telemetry", central);
     footer->setObjectName("footer");
 
     root->addWidget(title);
     root->addWidget(subtitle);
-    root->addLayout(grid);
+    root->addLayout(systemGrid);
+    root->addWidget(telemetryTitle);
+    root->addWidget(telemetrySubtitle);
+    root->addLayout(telemetryGrid);
     root->addStretch();
     root->addLayout(buttonRow);
     root->addWidget(footer);
@@ -114,7 +137,14 @@ MainWindow::MainWindow(QWidget *parent)
     )");
 
     connect(refreshButton, &QPushButton::clicked, this, &MainWindow::refreshSystemInfo);
+
+    telemetryTimer_ = new QTimer(this);
+    telemetryTimer_->setInterval(1000);
+    connect(telemetryTimer_, &QTimer::timeout, this, &MainWindow::refreshTelemetry);
+
     refreshSystemInfo();
+    refreshTelemetry();
+    telemetryTimer_->start();
 }
 
 void MainWindow::refreshSystemInfo()
@@ -131,4 +161,43 @@ void MainWindow::refreshSystemInfo()
     osValue_->setText(info.operatingSystem);
     architectureValue_->setText(info.architecture);
     statusValue_->setText("System information collected");
+}
+
+void MainWindow::refreshTelemetry()
+{
+    const TelemetrySnapshot telemetry = collectTelemetry();
+
+    cpuUsageValue_->setText(QString("%1%")
+                                .arg(QString::number(telemetry.cpuUsagePercent, 'f', 0)));
+
+    if (telemetry.gpuUsageAvailable) {
+        gpuUsageValue_->setText(QString("%1%")
+                                    .arg(QString::number(telemetry.gpuUsagePercent, 'f', 0)));
+    } else {
+        gpuUsageValue_->setText("Sampling...");
+    }
+
+    const quint64 usedRam = telemetry.totalMemoryBytes >= telemetry.availableMemoryBytes
+                                ? telemetry.totalMemoryBytes - telemetry.availableMemoryBytes
+                                : 0;
+    ramUsageValue_->setText(QString("%1 / %2")
+                                .arg(formatBytes(usedRam))
+                                .arg(formatBytes(telemetry.totalMemoryBytes)));
+
+    if (telemetry.gpuMemoryTotalBytes > 0) {
+        vramUsageValue_->setText(QString("%1 / %2")
+                                     .arg(formatBytes(telemetry.gpuMemoryUsedBytes))
+                                     .arg(formatBytes(telemetry.gpuMemoryTotalBytes)));
+    } else {
+        vramUsageValue_->setText("Unavailable");
+    }
+
+    if (telemetry.gpuTemperatureAvailable) {
+        gpuTemperatureValue_->setText(QString("%1 °C")
+                                          .arg(QString::number(telemetry.gpuTemperatureCelsius, 'f', 0)));
+    } else {
+        gpuTemperatureValue_->setText("Unavailable");
+    }
+
+    diagnosisValue_->setText(diagnoseBottleneck(telemetry));
 }
