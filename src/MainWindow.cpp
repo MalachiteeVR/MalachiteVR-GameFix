@@ -178,7 +178,7 @@ MainWindow::MainWindow(QWidget *parent)
     )");
 
     connect(refreshButton, &QPushButton::clicked, this, &MainWindow::refreshSystemInfo);
-    connect(diagnosticButton, &QPushButton::clicked, this, [this]() {
+    connect(diagnosticButton, &QPushButton::clicked, this, [this, diagnosticButton]() {
         diagnosticButton->setEnabled(false);
         diagnosticButton->setText("Running Diagnostic...");
         QApplication::setOverrideCursor(Qt::WaitCursor);
