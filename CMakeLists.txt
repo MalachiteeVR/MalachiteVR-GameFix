@@ -21,6 +21,7 @@ add_executable(MalachiteVRGameFix
     src/Telemetry.h
     src/Diagnostic.cpp
     src/Diagnostic.h
+    src/GameDetection.cpp
     src/PerformanceHistory.cpp
     src/PerformanceHistory.h
     src/Fixes.cpp
