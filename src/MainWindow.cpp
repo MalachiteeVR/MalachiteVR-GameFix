@@ -1,13 +1,20 @@
 #include "MainWindow.h"
+#include "Diagnostic.h"
 #include "SystemInfo.h"
 #include "Telemetry.h"
 
+#include <QApplication>
+#include <QDialog>
 #include <QFont>
+#include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -17,9 +24,16 @@ MainWindow::MainWindow(QWidget *parent)
 {
     setWindowTitle("MalachiteVR GameFix");
     resize(1000, 780);
-    setMinimumSize(860, 680);
+    setMinimumSize(720, 520);
 
-    auto *central = new QWidget(this);
+    auto *scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+    auto *central = new QWidget;
+    central->setMinimumWidth(680);
     auto *root = new QVBoxLayout(central);
     root->setContentsMargins(28, 24, 28, 24);
     root->setSpacing(16);
@@ -32,13 +46,20 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *subtitle = new QLabel("Find out why your games are running poorly.", central);
     subtitle->setObjectName("subtitle");
+    subtitle->setWordWrap(true);
 
     auto makeCard = [central](const QString &heading, QLabel *&value) {
         auto *box = new QGroupBox(heading, central);
+        box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
         auto *layout = new QVBoxLayout(box);
         layout->setContentsMargins(16, 14, 16, 16);
+        layout->setSpacing(8);
+
         value = new QLabel("Detecting...", box);
         value->setWordWrap(true);
+        value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+        value->setMinimumWidth(0);
         QFont font = value->font();
         font.setPointSize(12);
         font.setBold(true);
@@ -49,6 +70,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *systemGrid = new QGridLayout;
     systemGrid->setSpacing(12);
+    systemGrid->setColumnStretch(0, 1);
+    systemGrid->setColumnStretch(1, 1);
     systemGrid->addWidget(makeCard("CPU", cpuValue_), 0, 0);
     systemGrid->addWidget(makeCard("GPU", gpuValue_), 0, 1);
     systemGrid->addWidget(makeCard("Memory", memoryValue_), 1, 0);
@@ -65,9 +88,12 @@ MainWindow::MainWindow(QWidget *parent)
     auto *telemetrySubtitle = new QLabel(
         "Updated every second. Values are read-only and are not sent anywhere.", central);
     telemetrySubtitle->setObjectName("subtitle");
+    telemetrySubtitle->setWordWrap(true);
 
     auto *telemetryGrid = new QGridLayout;
     telemetryGrid->setSpacing(12);
+    telemetryGrid->setColumnStretch(0, 1);
+    telemetryGrid->setColumnStretch(1, 1);
     telemetryGrid->addWidget(makeCard("CPU Usage", cpuUsageValue_), 0, 0);
     telemetryGrid->addWidget(makeCard("GPU Usage", gpuUsageValue_), 0, 1);
     telemetryGrid->addWidget(makeCard("RAM Usage", ramUsageValue_), 1, 0);
@@ -78,12 +104,14 @@ MainWindow::MainWindow(QWidget *parent)
     auto *buttonRow = new QHBoxLayout;
     auto *refreshButton = new QPushButton("Refresh System Information", central);
     auto *diagnosticButton = new QPushButton("Run Full Diagnostic", central);
-    diagnosticButton->setEnabled(false);
+    refreshButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    diagnosticButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     buttonRow->addWidget(refreshButton);
     buttonRow->addWidget(diagnosticButton);
 
-    auto *footer = new QLabel("v0.2.0  •  Windows  •  Qt 6  •  C++20  •  Live telemetry", central);
+    auto *footer = new QLabel("v0.3.0  •  Windows  •  Qt 6  •  C++20  •  Live telemetry + diagnostics", central);
     footer->setObjectName("footer");
+    footer->setWordWrap(true);
 
     root->addWidget(title);
     root->addWidget(subtitle);
@@ -91,16 +119,21 @@ MainWindow::MainWindow(QWidget *parent)
     root->addWidget(telemetryTitle);
     root->addWidget(telemetrySubtitle);
     root->addLayout(telemetryGrid);
-    root->addStretch();
+    root->addStretch(1);
     root->addLayout(buttonRow);
     root->addWidget(footer);
 
-    setCentralWidget(central);
+    scrollArea->setWidget(central);
+    setCentralWidget(scrollArea);
 
     setStyleSheet(R"(
         QMainWindow, QWidget {
             background: #0b0f0d;
             color: #e8f5ec;
+        }
+        QScrollArea {
+            border: none;
+            background: #0b0f0d;
         }
         QLabel#subtitle, QLabel#footer {
             color: #91a49a;
@@ -134,9 +167,63 @@ MainWindow::MainWindow(QWidget *parent)
             color: #65736b;
             border-color: #28312b;
         }
+        QPlainTextEdit {
+            background: #080c0a;
+            border: 1px solid #26352c;
+            border-radius: 8px;
+            padding: 10px;
+            color: #e8f5ec;
+            selection-background-color: #205a34;
+        }
     )");
 
     connect(refreshButton, &QPushButton::clicked, this, &MainWindow::refreshSystemInfo);
+    connect(diagnosticButton, &QPushButton::clicked, this, [this]() {
+        diagnosticButton->setEnabled(false);
+        diagnosticButton->setText("Running Diagnostic...");
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        QApplication::processEvents();
+
+        const DiagnosticReport report = runFullDiagnostic();
+
+        QApplication::restoreOverrideCursor();
+        diagnosticButton->setText("Run Full Diagnostic");
+        diagnosticButton->setEnabled(true);
+
+        QDialog dialog(this);
+        dialog.setWindowTitle("MalachiteVR GameFix - Diagnostic Report");
+        dialog.resize(860, 680);
+        dialog.setMinimumSize(640, 480);
+
+        auto *layout = new QVBoxLayout(&dialog);
+        layout->setContentsMargins(18, 18, 18, 18);
+        layout->setSpacing(12);
+
+        auto *summary = new QLabel(report.summary, &dialog);
+        summary->setWordWrap(true);
+        QFont summaryFont = summary->font();
+        summaryFont.setPointSize(13);
+        summaryFont.setBold(true);
+        summary->setFont(summaryFont);
+
+        auto *details = new QPlainTextEdit(&dialog);
+        details->setReadOnly(true);
+        details->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+        details->setPlainText(report.details);
+
+        auto *close = new QPushButton("Close", &dialog);
+        close->setFixedWidth(110);
+        connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+        auto *buttonLayout = new QHBoxLayout;
+        buttonLayout->addStretch();
+        buttonLayout->addWidget(close);
+
+        layout->addWidget(summary);
+        layout->addWidget(details, 1);
+        layout->addLayout(buttonLayout);
+        dialog.exec();
+    });
 
     telemetryTimer_ = new QTimer(this);
     telemetryTimer_->setInterval(1000);
