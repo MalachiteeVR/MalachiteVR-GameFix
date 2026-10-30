@@ -2,18 +2,25 @@
 #include "SystemInfo.h"
 #include "Telemetry.h"
 
+#include <QByteArray>
 #include <QDateTime>
 #include <QProcess>
 #include <QStringList>
 
 #ifdef Q_OS_WIN
-#include <windows.h>
+// Winsock headers must come before Windows.h to avoid winsock type conflicts.
 #include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <TlHelp32.h>
 #include <iphlpapi.h>
 #include <icmpapi.h>
 #include <netioapi.h>
 #include <pdh.h>
 #endif
+
+#include <algorithm>
+#include <iterator>
 
 namespace
 {
@@ -193,10 +200,6 @@ bool pingHost(const QString &host, int attempts, QString &result, double &averag
                  .arg(QString::number(maximum, 'f', 1))
                  .arg(loss)
                  .arg(QString::number(jitter, 'f', 1));
-    if (average >= 100.0)
-        warnings << QString("Internet latency to %1 is high (%2 ms average).").arg(host).arg(QString::number(average, 'f', 1));
-    if (jitter >= 30.0)
-        warnings << QString("Internet latency variation to %1 is high (%2 ms).").arg(host).arg(QString::number(jitter, 'f', 1));
     return true;
 }
 
