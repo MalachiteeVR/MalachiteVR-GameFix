@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QVector>
 #include <QtGlobal>
 
 struct TelemetrySnapshot
@@ -12,8 +13,12 @@ struct TelemetrySnapshot
     quint64 gpuMemoryUsedBytes = 0;
     quint64 gpuMemoryTotalBytes = 0;
     double gpuTemperatureCelsius = 0.0;
+    double cpuTemperatureCelsius = 0.0;
+    QVector<double> perCoreUsagePercent;
     bool gpuTemperatureAvailable = false;
+    bool cpuTemperatureAvailable = false;
     bool gpuUsageAvailable = false;
+    bool perCoreUsageAvailable = false;
 };
 
 TelemetrySnapshot collectTelemetry();
