@@ -4,37 +4,54 @@ A Windows gaming diagnostics and troubleshooting utility built with **Qt 6 + C++
 
 ## Current status
 
-**v0.3.0** adds the first full diagnostic pass on top of the live performance dashboard. The dashboard is responsive and can scroll when the window is resized smaller, so diagnostic text is not clipped.
+**v0.4.0** now contains the rest of the core diagnostic workflow that was planned for the first major version: persistent per-game capture/history, stronger game identification, per-core CPU telemetry, CPU/thermal-zone reporting, network adapter/link diagnostics, report export, and opt-in reversible Windows gaming fixes.
 
-## Current diagnostics
+## Diagnostics and telemetry
 
-- CPU, GPU, and RAM information
+- CPU, GPU, RAM, and operating-system information
 - Live CPU utilization
+- Live per-core CPU utilization using Windows Performance Counters
 - Live GPU utilization using Windows Performance Counters
 - Live system memory usage
 - Dedicated GPU memory usage through DXGI
 - NVIDIA GPU temperature when NVML is available
+- CPU/thermal-zone temperature in full diagnostics when Windows ACPI exposes it
 - CPU/GPU/RAM/VRAM bottleneck analysis
-- Running game detection for common PC/VR games
+- Detection of common PC/VR games using process names, executable paths, and window titles
+- Detected game executable path for per-game fixes
+- Default gateway latency testing
 - Internet latency testing against 1.1.1.1
 - Packet-loss measurement and latency variation reporting
+- Network adapter state, IP addresses, gateway, and RX/TX link speed
 - Fixed-drive free-space inspection
 - Current physical-disk activity sampling
 - One-shot full diagnostic report with warnings and recommendations
+- Saveable text diagnostic reports
 - Resizable, scrollable dashboard and report viewer
 
-The full diagnostic is read-only. It does not modify Windows settings, registry values, firewall rules, power plans, or game files.
+## Performance capture and history
 
-## Planned next steps
+- One-click per-game performance capture
+- One sample per second while capture is active
+- Persistent local JSON history under the Windows application-data directory
+- Up to 7,200 samples retained per game
+- History viewer with averages for CPU, GPU, RAM, VRAM, and GPU temperature
+- CSV export for captured performance data
+- Clear individual game histories from the UI
 
-- Per-game performance history and capture
-- More robust game identification
-- CPU temperature and per-core utilization where reliable APIs are available
-- Network adapter/link diagnostics
-- Safe, user-approved Windows gaming fixes
-- Reversible configuration changes
+## Safe gaming fixes
 
-GameFix focuses on explaining **why** a game is performing poorly instead of applying opaque "FPS boost" tweaks.
+All fixes are opt-in and require an explicit confirmation before changing anything. GameFix stores the previous value where practical and exposes a restore action.
+
+- Enable Windows Game Mode
+- Activate the Windows High Performance power plan while remembering the previous plan
+- Disable Fullscreen Optimizations for the currently detected game
+- Enable or disable Hardware-Accelerated GPU Scheduling when GameFix is running elevated
+- Restore saved GameFix-managed settings
+
+HAGS changes require administrator privileges and a Windows restart. Per-game fullscreen compatibility changes require relaunching the game.
+
+GameFix deliberately does **not** apply registry tweaks, power-plan changes, firewall changes, process kills, overclocking, or game-file modifications automatically.
 
 ## Build
 
@@ -59,6 +76,6 @@ The executable is produced as `build\Release\malachite-gamefix.exe` with a Visua
 - Native Windows application
 - No telemetry sent to external services
 - No account required
-- No unsafe registry or "magic optimizer" tweaks
-- Every system-changing fix should be explained and user-approved
-- Keep the implementation small and maintainable
+- Explain the bottleneck before suggesting a change
+- Every system-changing fix should be user-approved and reversible where practical
+- Keep the implementation small, transparent, and maintainable
