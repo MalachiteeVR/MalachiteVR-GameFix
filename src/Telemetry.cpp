@@ -3,9 +3,12 @@
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <dxgi.h>
+#include <dxgi1_4.h>
 #include <pdh.h>
 #include <pdhmsg.h>
 #endif
+
+#include <QByteArray>
 
 #include <algorithm>
 
