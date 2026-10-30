@@ -11,6 +11,8 @@ struct SystemInfo
     quint64 totalMemoryBytes = 0;
     quint64 availableMemoryBytes = 0;
     QString graphics;
+
+    QString toText() const;
 };
 
 SystemInfo collectSystemInfo();
