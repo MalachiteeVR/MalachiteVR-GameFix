@@ -1,8 +1,8 @@
 #include "Fixes.h"
 
-#include <QSettings>
 #include <QProcess>
-#include <QDir>
+#include <QRegularExpression>
+#include <QSettings>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
