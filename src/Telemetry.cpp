@@ -127,6 +127,71 @@ double readGpuUsage(bool &available)
     return std::clamp(total, 0.0, 100.0);
 }
 
+QVector<double> readPerCoreUsage(bool &available)
+{
+    static PDH_HQUERY query = nullptr;
+    static PDH_HCOUNTER counter = nullptr;
+    static bool initialized = false;
+
+    if (!initialized) {
+        initialized = true;
+        if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS)
+            return available = false, {};
+
+        const PDH_STATUS status = PdhAddEnglishCounterW(
+            query,
+            L"\\Processor(*)\\% Processor Time",
+            0,
+            &counter);
+        if (status != ERROR_SUCCESS) {
+            PdhCloseQuery(query);
+            query = nullptr;
+            return available = false, {};
+        }
+
+        PdhCollectQueryData(query);
+        return available = false, {};
+    }
+
+    if (!query || !counter || PdhCollectQueryData(query) != ERROR_SUCCESS)
+        return available = false, {};
+
+    DWORD bufferSize = 0;
+    DWORD itemCount = 0;
+    PDH_STATUS status = PdhGetFormattedCounterArrayW(
+        counter,
+        PDH_FMT_DOUBLE,
+        &bufferSize,
+        &itemCount,
+        nullptr);
+    if (status != PDH_MORE_DATA || bufferSize == 0 || itemCount == 0)
+        return available = false, {};
+
+    QByteArray buffer(static_cast<qsizetype>(bufferSize), Qt::Uninitialized);
+    auto *items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W *>(buffer.data());
+    status = PdhGetFormattedCounterArrayW(
+        counter,
+        PDH_FMT_DOUBLE,
+        &bufferSize,
+        &itemCount,
+        items);
+    if (status != ERROR_SUCCESS)
+        return available = false, {};
+
+    QVector<double> cores;
+    cores.reserve(static_cast<int>(itemCount));
+    for (DWORD i = 0; i < itemCount; ++i) {
+        const QString name = QString::fromWCharArray(items[i].szName);
+        if (name.compare("_Total", Qt::CaseInsensitive) == 0)
+            continue;
+        if (items[i].FmtValue.CStatus == ERROR_SUCCESS)
+            cores.append(std::clamp(items[i].FmtValue.doubleValue, 0.0, 100.0));
+    }
+
+    available = !cores.isEmpty();
+    return cores;
+}
+
 void readGpuMemory(quint64 &used, quint64 &total)
 {
     IDXGIFactory *factory = nullptr;
@@ -216,6 +281,7 @@ TelemetrySnapshot collectTelemetry()
 
     readGpuMemory(telemetry.gpuMemoryUsedBytes, telemetry.gpuMemoryTotalBytes);
     telemetry.gpuUsagePercent = readGpuUsage(telemetry.gpuUsageAvailable);
+    telemetry.perCoreUsagePercent = readPerCoreUsage(telemetry.perCoreUsageAvailable);
     telemetry.gpuTemperatureCelsius = readNvidiaGpuTemperature(telemetry.gpuTemperatureAvailable);
 #endif
 
@@ -233,6 +299,10 @@ QString diagnoseBottleneck(const TelemetrySnapshot &telemetry)
                                    static_cast<double>(telemetry.gpuMemoryTotalBytes)) * 100.0
                                 : 0.0;
 
+    double hottestCore = 0.0;
+    for (const double core : telemetry.perCoreUsagePercent)
+        hottestCore = std::max(hottestCore, core);
+
     if (memoryUsed >= 90.0)
         return QString("System RAM pressure detected (%1% used). Close background applications or reduce in-game memory usage.")
             .arg(QString::number(memoryUsed, 'f', 0));
@@ -247,6 +317,10 @@ QString diagnoseBottleneck(const TelemetrySnapshot &telemetry)
 
     if (telemetry.cpuUsagePercent >= 90.0 && telemetry.gpuUsageAvailable && telemetry.gpuUsagePercent < 80.0)
         return QString("CPU utilization is high while GPU utilization is lower. The game is likely CPU-bound.");
+
+    if (hottestCore >= 95.0 && telemetry.cpuUsagePercent < 85.0)
+        return QString("One or more CPU cores are saturated (hottest core %1%). A lightly-threaded game may be CPU-bound even when total CPU usage looks moderate.")
+            .arg(QString::number(hottestCore, 'f', 0));
 
     if (memoryUsed >= 80.0)
         return QString("System RAM usage is elevated (%1%). Background applications may be affecting performance.")
