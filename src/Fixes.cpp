@@ -3,6 +3,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QStringList>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -78,7 +79,7 @@ bool deleteValue(HKEY root, const wchar_t *subKey, const wchar_t *valueName)
     if (RegOpenKeyExW(root, subKey, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS)
         return false;
     const LONG status = RegDeleteValueW(key, valueName);
-    RegCloseKey(key);
+    RegCloseHandle(key);
     return status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND;
 }
 #endif
@@ -110,8 +111,11 @@ FixResult FixManager::restoreGameMode()
 {
 #ifdef Q_OS_WIN
     QSettings settings = appSettings();
+    if (!settings.contains("backup/gameModeExists"))
+        return result("Restore Game Mode", false, "GameFix has no saved Game Mode change to restore.");
+
     QSettings gameBar("HKEY_CURRENT_USER\\Software\\Microsoft\\GameBar", QSettings::NativeFormat);
-    const bool existed = settings.value("backup/gameModeExists", false).toBool();
+    const bool existed = settings.value("backup/gameModeExists").toBool();
     if (existed)
         gameBar.setValue("AutoGameModeEnabled", settings.value("backup/gameModeValue"));
     else
@@ -296,7 +300,11 @@ FixResult FixManager::restoreHardwareAcceleratedGpuScheduling()
                       "This change writes to HKLM and requires GameFix to be run as administrator.");
 
     QSettings settings = appSettings();
-    const bool existed = settings.value("backup/hagsExists", false).toBool();
+    if (!settings.contains("backup/hagsExists"))
+        return result("Restore Hardware-Accelerated GPU Scheduling", false,
+                      "GameFix has no saved HAGS change to restore.");
+
+    const bool existed = settings.value("backup/hagsExists").toBool();
     bool success = false;
     if (existed) {
         const DWORD value = settings.value("backup/hagsValue").toUInt();
