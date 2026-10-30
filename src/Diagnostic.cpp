@@ -10,101 +10,303 @@
 #include <icmpapi.h>
 #include <pdh.h>
 #include <tlhelp32.h>
+#include <ws2tcpip.h>
 #endif
 
+#include <QProcess>
 #include <QStringList>
 
 #include <algorithm>
+#include <vector>
 
 #ifdef Q_OS_WIN
 namespace
 {
-QString processNameFromPid(DWORD pid)
+struct ProcessInfo
+{
+    QString name;
+    QString path;
+};
+
+ProcessInfo processInfoFromPid(DWORD pid)
 {
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!process)
         return {};
 
     wchar_t path[32768]{};
-    DWORD length = 32768;
-    QString result;
-    if (QueryFullProcessImageNameW(process, 0, path, &length))
-        result = QString::fromWCharArray(path, static_cast<int>(length));
+    DWORD length = static_cast<DWORD>(std::size(path));
+    ProcessInfo result;
+    if (QueryFullProcessImageNameW(process, 0, path, &length)) {
+        result.path = QString::fromWCharArray(path, static_cast<int>(length));
+        const int slash = result.path.lastIndexOf(QChar('\\'));
+        result.name = slash >= 0 ? result.path.mid(slash + 1) : result.path;
+    }
     CloseHandle(process);
-
-    const int slash = result.lastIndexOf(QChar('\\'));
-    return slash >= 0 ? result.mid(slash + 1) : result;
+    return result;
 }
 
-QString detectRunningGame()
+QString friendlyGameName(const QString &processName, const QString &windowTitle)
 {
-    static const QStringList knownGames = {
-        "vrchat.exe",
-        "beatsaber.exe",
-        "minecraft.exe",
-        "minecraftlauncher.exe",
-        "javaw.exe",
-        "java.exe",
-        "eldenring.exe",
-        "fortniteclient-win64-shipping.exe",
-        "cs2.exe",
-        "csgo.exe",
-        "valorant-win64-shipping.exe",
-        "helldivers2.exe",
-        "palworld-win64-shipping.exe",
-        "r5apex.exe",
-        "starfield.exe",
-        "cyberpunk2077.exe",
-        "gta5.exe",
-        "rocketleague.exe",
-        "overwatch.exe"
-    };
+    const QString process = processName.toLower();
+    const QString title = windowTitle.toLower();
 
+    if (process == "java.exe" || process == "javaw.exe") {
+        if (title.contains("minecraft"))
+            return "Minecraft Java Edition";
+        return {};
+    }
+    if (process == "minecraftlauncher.exe") return "Minecraft Launcher";
+    if (process == "vrchat.exe" || title.contains("vrchat")) return "VRChat";
+    if (process == "beatsaber.exe" || title.contains("beat saber")) return "Beat Saber";
+    if (process == "eldenring.exe" || title.contains("elden ring")) return "Elden Ring";
+    if (process == "fortniteclient-win64-shipping.exe" || title.contains("fortnite")) return "Fortnite";
+    if (process == "cs2.exe" || process == "csgo.exe" || title.contains("counter-strike")) return "Counter-Strike";
+    if (process == "valorant-win64-shipping.exe" || title.contains("valorant")) return "VALORANT";
+    if (process == "helldivers2.exe" || title.contains("helldivers")) return "HELLDIVERS 2";
+    if (process == "palworld-win64-shipping.exe" || title.contains("palworld")) return "Palworld";
+    if (process == "r5apex.exe" || title.contains("apex legends")) return "Apex Legends";
+    if (process == "starfield.exe" || title.contains("starfield")) return "Starfield";
+    if (process == "cyberpunk2077.exe" || title.contains("cyberpunk")) return "Cyberpunk 2077";
+    if (process == "gta5.exe" || title.contains("grand theft auto")) return "Grand Theft Auto V";
+    if (process == "rocketleague.exe" || title.contains("rocket league")) return "Rocket League";
+    if (process == "overwatch.exe" || title.contains("overwatch")) return "Overwatch";
+    return {};
+}
+
+bool isKnownProcess(const QString &processName)
+{
+    static const QStringList known = {
+        "vrchat.exe", "beatsaber.exe", "minecraft.exe", "minecraftlauncher.exe",
+        "javaw.exe", "java.exe", "eldenring.exe", "fortniteclient-win64-shipping.exe",
+        "cs2.exe", "csgo.exe", "valorant-win64-shipping.exe", "helldivers2.exe",
+        "palworld-win64-shipping.exe", "r5apex.exe", "starfield.exe", "cyberpunk2077.exe",
+        "gta5.exe", "rocketleague.exe", "overwatch.exe"
+    };
+    return known.contains(processName.toLower());
+}
+
+QString windowTitleForProcess(DWORD pid)
+{
+    struct Context {
+        DWORD pid = 0;
+        QString title;
+    } context{pid, {}};
+
+    EnumWindows([](HWND hwnd, LPARAM parameter) -> BOOL {
+        auto *context = reinterpret_cast<Context *>(parameter);
+        DWORD windowPid = 0;
+        GetWindowThreadProcessId(hwnd, &windowPid);
+        if (windowPid != context->pid || !IsWindowVisible(hwnd))
+            return TRUE;
+
+        wchar_t title[512]{};
+        const int length = GetWindowTextW(hwnd, title, static_cast<int>(std::size(title)));
+        if (length > 0) {
+            context->title = QString::fromWCharArray(title, length);
+            return FALSE;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&context));
+
+    return context.title;
+}
+
+struct WindowSearchContext
+{
+    DetectedGame game;
+};
+
+BOOL CALLBACK findGameWindow(HWND hwnd, LPARAM parameter)
+{
+    auto *context = reinterpret_cast<WindowSearchContext *>(parameter);
+    if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != nullptr)
+        return TRUE;
+
+    wchar_t titleBuffer[512]{};
+    const int titleLength = GetWindowTextW(hwnd, titleBuffer, static_cast<int>(std::size(titleBuffer)));
+    if (titleLength <= 0)
+        return TRUE;
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    const ProcessInfo process = processInfoFromPid(pid);
+    const QString title = QString::fromWCharArray(titleBuffer, titleLength);
+    const QString friendly = friendlyGameName(process.name, title);
+    if (friendly.isEmpty())
+        return TRUE;
+
+    context->game.name = friendly;
+    context->game.processName = process.name;
+    context->game.executablePath = process.path;
+    context->game.processId = pid;
+    context->game.running = true;
+    return FALSE;
+}
+
+DetectedGame detectRunningGameImpl()
+{
     const HWND foreground = GetForegroundWindow();
     if (foreground) {
         DWORD pid = 0;
         GetWindowThreadProcessId(foreground, &pid);
-        const QString foregroundProcess = processNameFromPid(pid).toLower();
-        if (knownGames.contains(foregroundProcess))
-            return foregroundProcess;
+        const ProcessInfo process = processInfoFromPid(pid);
+        const QString title = windowTitleForProcess(pid);
+        const QString friendly = friendlyGameName(process.name, title);
+        if (!friendly.isEmpty() || isKnownProcess(process.name)) {
+            DetectedGame game;
+            game.name = friendly.isEmpty() ? process.name : friendly;
+            game.processName = process.name;
+            game.executablePath = process.path;
+            game.processId = pid;
+            game.running = true;
+            return game;
+        }
     }
+
+    WindowSearchContext windowContext;
+    EnumWindows(findGameWindow, reinterpret_cast<LPARAM>(&windowContext));
+    if (windowContext.game.running)
+        return windowContext.game;
 
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE)
-        return "No recognized game process found";
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (Process32FirstW(snapshot, &entry)) {
+            do {
+                const QString processName = QString::fromWCharArray(entry.szExeFile);
+                if (!isKnownProcess(processName))
+                    continue;
 
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    QString result;
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            const QString name = QString::fromWCharArray(entry.szExeFile).toLower();
-            if (knownGames.contains(name)) {
-                result = name;
-                break;
-            }
-        } while (Process32NextW(snapshot, &entry));
+                const ProcessInfo process = processInfoFromPid(entry.th32ProcessID);
+                const QString friendly = friendlyGameName(process.name, windowTitleForProcess(entry.th32ProcessID));
+                if (friendly.isEmpty())
+                    continue;
+
+                DetectedGame game;
+                game.name = friendly;
+                game.processName = process.name;
+                game.executablePath = process.path;
+                game.processId = entry.th32ProcessID;
+                game.running = true;
+                CloseHandle(snapshot);
+                return game;
+            } while (Process32NextW(snapshot, &entry));
+        }
+        CloseHandle(snapshot);
     }
-    CloseHandle(snapshot);
 
-    return result.isEmpty() ? "No recognized game process found" : result;
+    return {};
 }
 
-QString networkCheck(QStringList &warnings)
+QString addressToString(const SOCKADDR *address)
 {
-    HANDLE icmp = IcmpCreateFile();
-    if (icmp == INVALID_HANDLE_VALUE) {
-        warnings << "Unable to open the Windows ICMP interface.";
-        return "Network test unavailable";
+    if (!address)
+        return {};
+
+    wchar_t buffer[INET6_ADDRSTRLEN]{};
+    if (address->sa_family == AF_INET) {
+        const auto *ipv4 = reinterpret_cast<const SOCKADDR_IN *>(address);
+        return InetNtopW(AF_INET, const_cast<IN_ADDR *>(&ipv4->sin_addr), buffer,
+                         static_cast<DWORD>(std::size(buffer)))
+                   ? QString::fromWCharArray(buffer)
+                   : QString{};
+    }
+    if (address->sa_family == AF_INET6) {
+        const auto *ipv6 = reinterpret_cast<const SOCKADDR_IN6 *>(address);
+        return InetNtopW(AF_INET6, const_cast<IN6_ADDR *>(&ipv6->sin6_addr), buffer,
+                         static_cast<DWORD>(std::size(buffer)))
+                   ? QString::fromWCharArray(buffer)
+                   : QString{};
+    }
+    return {};
+}
+
+QString formatLinkSpeed(ULONG64 bitsPerSecond)
+{
+    if (bitsPerSecond == 0)
+        return "unknown";
+    if (bitsPerSecond >= 1000000000ULL)
+        return QString("%1 Gbps").arg(QString::number(bitsPerSecond / 1000000000.0, 'f', 1));
+    return QString("%1 Mbps").arg(QString::number(bitsPerSecond / 1000000.0, 'f', 0));
+}
+
+QString networkAdapterCheck(QStringList &warnings, QString &gateway)
+{
+    ULONG size = 15000;
+    std::vector<BYTE> buffer(size);
+    ULONG flags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
+    ULONG status = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr,
+                                        reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data()), &size);
+    if (status == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(size);
+        status = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr,
+                                      reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data()), &size);
     }
 
-    const IPAddr destination = inet_addr("1.1.1.1");
+    if (status != NO_ERROR)
+        return "Unable to query Windows network adapters.";
+
+    QStringList adapters;
+    for (PIP_ADAPTER_ADDRESSES adapter = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
+         adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+            continue;
+
+        const QString name = adapter->FriendlyName
+                                 ? QString::fromWCharArray(adapter->FriendlyName)
+                                 : QStringLiteral("Unnamed adapter");
+        const QString state = adapter->OperStatus == IfOperStatusUp ? "Up" : "Down";
+        QStringList addresses;
+        for (PIP_ADAPTER_UNICAST_ADDRESS address = adapter->FirstUnicastAddress;
+             address != nullptr; address = address->Next) {
+            const QString text = addressToString(address->Address.lpSockaddr);
+            if (!text.isEmpty())
+                addresses << text;
+        }
+
+        QString adapterGateway;
+        for (PIP_ADAPTER_GATEWAY_ADDRESS_LH gatewayAddress = adapter->FirstGatewayAddress;
+             gatewayAddress != nullptr; gatewayAddress = gatewayAddress->Next) {
+            adapterGateway = addressToString(gatewayAddress->Address.lpSockaddr);
+            if (adapterGateway.contains('.'))
+                break;
+        }
+        if (gateway.isEmpty() && !adapterGateway.isEmpty())
+            gateway = adapterGateway;
+
+        adapters << QString("%1: %2 | RX %3 | TX %4 | IP %5%6")
+                        .arg(name)
+                        .arg(state)
+                        .arg(formatLinkSpeed(adapter->ReceiveLinkSpeed))
+                        .arg(formatLinkSpeed(adapter->TransmitLinkSpeed))
+                        .arg(addresses.isEmpty() ? "none" : addresses.join(", "))
+                        .arg(adapterGateway.isEmpty() ? QString{} : QString(" | Gateway %1").arg(adapterGateway));
+
+        if (adapter->OperStatus == IfOperStatusUp &&
+            (adapter->ReceiveLinkSpeed > 0 && adapter->ReceiveLinkSpeed < 100000000ULL))
+            warnings << QString("Active adapter '%1' has a link speed below 100 Mbps.").arg(name);
+    }
+
+    if (adapters.isEmpty())
+        warnings << "No active physical network adapter was found.";
+    return adapters.isEmpty() ? "No network adapters could be inspected." : adapters.join("\n");
+}
+
+bool pingHost(const QString &host, int attempts, QString &result, double &average, double &jitter, int &loss)
+{
+    HANDLE icmp = IcmpCreateFile();
+    if (icmp == INVALID_HANDLE_VALUE)
+        return false;
+
+    const QByteArray hostBytes = host.toLatin1();
+    const IPAddr destination = inet_addr(hostBytes.constData());
     const char payload[] = "MalachiteVR GameFix diagnostic";
-    constexpr int attempts = 4;
     int received = 0;
-    double totalLatency = 0.0;
-    double minLatency = 10000.0;
-    double maxLatency = 0.0;
+    double total = 0.0;
+    double minimum = 100000.0;
+    double maximum = 0.0;
 
     for (int i = 0; i < attempts; ++i) {
         char replyBuffer[sizeof(ICMP_ECHO_REPLY) + sizeof(payload) + 8]{};
@@ -117,7 +319,6 @@ QString networkCheck(QStringList &warnings)
             replyBuffer,
             sizeof(replyBuffer),
             1000);
-
         if (replies == 0)
             continue;
 
@@ -127,34 +328,62 @@ QString networkCheck(QStringList &warnings)
 
         const double latency = static_cast<double>(reply->RoundTripTime);
         ++received;
-        totalLatency += latency;
-        minLatency = std::min(minLatency, latency);
-        maxLatency = std::max(maxLatency, latency);
+        total += latency;
+        minimum = std::min(minimum, latency);
+        maximum = std::max(maximum, latency);
     }
 
     IcmpCloseHandle(icmp);
-
-    const int lost = attempts - received;
-    const double lossPercent = (static_cast<double>(lost) / attempts) * 100.0;
-    if (lossPercent > 0.0)
-        warnings << QString("ICMP packet loss detected: %1%.").arg(QString::number(lossPercent, 'f', 0));
-
+    loss = attempts - received;
     if (received == 0)
-        return "No replies from 1.1.1.1 (ICMP may be blocked or the network may be unavailable)";
+        return false;
 
-    const double average = totalLatency / received;
-    const double jitter = maxLatency - minLatency;
-    if (average >= 100.0)
-        warnings << QString("High internet latency detected: %1 ms average.").arg(QString::number(average, 'f', 0));
-    if (jitter >= 30.0)
-        warnings << QString("High latency variation detected: %1 ms range.").arg(QString::number(jitter, 'f', 0));
+    average = total / received;
+    jitter = maximum - minimum;
+    result = QString("%1 ms average, %2 ms min, %3 ms max, %4% packet loss, %5 ms variation")
+                 .arg(QString::number(average, 'f', 1))
+                 .arg(QString::number(minimum, 'f', 0))
+                 .arg(QString::number(maximum, 'f', 0))
+                 .arg(QString::number(static_cast<double>(loss) / attempts * 100.0, 'f', 0))
+                 .arg(QString::number(jitter, 'f', 0));
+    return true;
+}
 
-    return QString("1.1.1.1: %1 ms average, %2 ms min, %3 ms max, %4% packet loss, %5 ms variation")
-        .arg(QString::number(average, 'f', 1))
-        .arg(QString::number(minLatency, 'f', 0))
-        .arg(QString::number(maxLatency, 'f', 0))
-        .arg(QString::number(lossPercent, 'f', 0))
-        .arg(QString::number(jitter, 'f', 0));
+QString networkCheck(QStringList &warnings, const QString &gateway)
+{
+    QStringList results;
+    if (!gateway.isEmpty() && gateway.contains('.')) {
+        QString gatewayResult;
+        double average = 0.0;
+        double jitter = 0.0;
+        int loss = 0;
+        if (pingHost(gateway, 2, gatewayResult, average, jitter, loss)) {
+            results << QString("Default gateway %1: %2").arg(gateway, gatewayResult);
+            if (loss > 0 || average >= 20.0 || jitter >= 10.0)
+                warnings << QString("Local gateway latency/loss is elevated: %1.").arg(gatewayResult);
+        } else {
+            warnings << QString("No ICMP reply from the default gateway (%1).").arg(gateway);
+        }
+    }
+
+    QString internetResult;
+    double average = 0.0;
+    double jitter = 0.0;
+    int loss = 0;
+    if (!pingHost("1.1.1.1", 4, internetResult, average, jitter, loss)) {
+        warnings << "No replies from 1.1.1.1. ICMP may be blocked or the network may be unavailable.";
+        results << "1.1.1.1: no ICMP replies";
+    } else {
+        results << QString("Internet 1.1.1.1: %1").arg(internetResult);
+        if (loss > 0)
+            warnings << QString("Internet ICMP packet loss detected: %1%.").arg(QString::number(static_cast<double>(loss) / 4.0 * 100.0, 'f', 0));
+        if (average >= 100.0)
+            warnings << QString("High internet latency detected: %1 ms average.").arg(QString::number(average, 'f', 0));
+        if (jitter >= 30.0)
+            warnings << QString("High internet latency variation detected: %1 ms range.").arg(QString::number(jitter, 'f', 0));
+    }
+
+    return results.isEmpty() ? "Network test unavailable" : results.join("\n");
 }
 
 QString storageCheck(QStringList &warnings)
@@ -215,6 +444,33 @@ QString storageCheck(QStringList &warnings)
     return result;
 }
 
+QString readCpuTemperature(QString &source)
+{
+    QProcess process;
+    const QString command =
+        "$values = Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature "
+        "-ErrorAction SilentlyContinue | Where-Object { $_.CurrentTemperature -gt 0 } | "
+        "ForEach-Object { [math]::Round(($_.CurrentTemperature / 10) - 273.15, 1) }; "
+        "if ($values) { $values -join ',' }";
+    process.start("powershell.exe", {"-NoProfile", "-NonInteractive", "-Command", command});
+    if (!process.waitForFinished(1500)) {
+        process.kill();
+        return {};
+    }
+
+    const QString output = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+    const QStringList values = output.split(',', Qt::SkipEmptyParts);
+    for (const QString &value : values) {
+        bool ok = false;
+        const double temperature = value.trimmed().toDouble(&ok);
+        if (ok && temperature > -20.0 && temperature < 130.0) {
+            source = "Windows ACPI thermal zone";
+            return QString::number(temperature, 'f', 1);
+        }
+    }
+    return {};
+}
+
 QString summarizeTelemetry(const TelemetrySnapshot &telemetry, QStringList &warnings)
 {
     const quint64 usedRam = telemetry.totalMemoryBytes >= telemetry.availableMemoryBytes
@@ -241,6 +497,19 @@ QString summarizeTelemetry(const TelemetrySnapshot &telemetry, QStringList &warn
     else if (telemetry.gpuTemperatureAvailable && telemetry.gpuTemperatureCelsius >= 80.0)
         warnings << QString("GPU temperature is elevated (%1 °C).").arg(QString::number(telemetry.gpuTemperatureCelsius, 'f', 0));
 
+    double hottestCore = 0.0;
+    int hottestCoreIndex = -1;
+    for (int i = 0; i < telemetry.perCoreUsagePercent.size(); ++i) {
+        if (telemetry.perCoreUsagePercent.at(i) > hottestCore) {
+            hottestCore = telemetry.perCoreUsagePercent.at(i);
+            hottestCoreIndex = i;
+        }
+    }
+    if (hottestCore >= 95.0)
+        warnings << QString("CPU core %1 is heavily loaded (%2%).")
+                        .arg(hottestCoreIndex + 1)
+                        .arg(QString::number(hottestCore, 'f', 0));
+
     return QString("CPU %1% | GPU %2% | RAM %3% | VRAM %4% | GPU temperature %5")
         .arg(QString::number(telemetry.cpuUsagePercent, 'f', 0))
         .arg(telemetry.gpuUsageAvailable ? QString::number(telemetry.gpuUsagePercent, 'f', 0) + "%" : "unavailable")
@@ -253,6 +522,15 @@ QString summarizeTelemetry(const TelemetrySnapshot &telemetry, QStringList &warn
 }
 #endif
 
+DetectedGame detectRunningGame()
+{
+#ifdef Q_OS_WIN
+    return detectRunningGameImpl();
+#else
+    return {};
+#endif
+}
+
 DiagnosticReport runFullDiagnostic()
 {
     DiagnosticReport report;
@@ -262,11 +540,31 @@ DiagnosticReport runFullDiagnostic()
     const TelemetrySnapshot telemetry = collectTelemetry();
     QStringList warnings;
 
-    const QString game = detectRunningGame();
+    report.game = detectRunningGameImpl();
+    const QString game = report.game.running
+                             ? QString("%1 (%2)").arg(report.game.name, report.game.processName)
+                             : "No recognized game is currently running";
     const QString telemetrySummary = summarizeTelemetry(telemetry, warnings);
     const QString bottleneck = diagnoseBottleneck(telemetry);
-    const QString network = networkCheck(warnings);
+
+    QString gateway;
+    const QString adapters = networkAdapterCheck(warnings, gateway);
+    const QString network = networkCheck(warnings, gateway);
     const QString storage = storageCheck(warnings);
+
+    QString cpuTemperatureSource;
+    const QString cpuTemperature = readCpuTemperature(cpuTemperatureSource);
+    if (!cpuTemperature.isEmpty()) {
+        const double temperature = cpuTemperature.toDouble();
+        if (temperature >= 90.0)
+            warnings << QString("Reported %1 CPU/thermal-zone temperature is high (%2 °C).")
+                            .arg(cpuTemperatureSource)
+                            .arg(cpuTemperature);
+        else if (temperature >= 80.0)
+            warnings << QString("Reported %1 CPU/thermal-zone temperature is elevated (%2 °C).")
+                            .arg(cpuTemperatureSource)
+                            .arg(cpuTemperature);
+    }
 
     QStringList details;
     details << "MALACHITEVR GAMEFIX - FULL DIAGNOSTIC"
@@ -279,16 +577,38 @@ DiagnosticReport runFullDiagnostic()
             << QString("GPU: %1").arg(system.graphics)
             << QString("RAM: %1 total, %2 available")
                    .arg(formatBytes(system.totalMemoryBytes))
-                   .arg(formatBytes(system.availableMemoryBytes))
-            << ""
+                   .arg(formatBytes(system.availableMemoryBytes));
+
+    if (!cpuTemperature.isEmpty())
+        details << QString("CPU/thermal-zone temperature: %1 °C (%2)").arg(cpuTemperature, cpuTemperatureSource);
+    else
+        details << "CPU temperature: unavailable through Windows ACPI thermal-zone telemetry";
+
+    details << ""
             << "RUNNING GAME"
-            << game
-            << ""
+            << game;
+    if (report.game.running)
+        details << QString("Executable: %1").arg(report.game.executablePath.isEmpty() ? "unavailable" : report.game.executablePath);
+
+    details << ""
             << "LIVE PERFORMANCE SNAPSHOT"
             << telemetrySummary
-            << QString("Diagnosis: %1").arg(bottleneck)
+            << QString("Diagnosis: %1").arg(bottleneck);
+
+    if (telemetry.perCoreUsageAvailable) {
+        QStringList cores;
+        for (int i = 0; i < telemetry.perCoreUsagePercent.size(); ++i)
+            cores << QString("Core %1: %2%").arg(i + 1).arg(QString::number(telemetry.perCoreUsagePercent.at(i), 'f', 0));
+        details << "Per-core CPU utilization:" << cores.join(" | ");
+    } else {
+        details << "Per-core CPU utilization: unavailable";
+    }
+
+    details << ""
+            << "NETWORK ADAPTERS / LINK"
+            << adapters
             << ""
-            << "NETWORK"
+            << "NETWORK LATENCY / LOSS"
             << network
             << ""
             << "STORAGE"
