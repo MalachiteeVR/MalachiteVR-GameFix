@@ -6,7 +6,7 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName("MalachiteVR GameFix");
-    QApplication::setApplicationVersion("0.1.0");
+    QApplication::setApplicationVersion("0.2.0");
     QApplication::setOrganizationName("MalachiteeVR");
 
     MainWindow window;
