@@ -28,6 +28,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <functional>
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -87,6 +89,7 @@ MainWindow::MainWindow(QWidget *parent)
     systemGrid->addWidget(makeCard("Operating System", osValue_), 1, 1);
     systemGrid->addWidget(makeCard("Architecture", architectureValue_), 2, 0);
     systemGrid->addWidget(makeCard("Detected Game", gameValue_), 2, 1);
+    systemGrid->addWidget(makeCard("GameFix Status", statusValue_), 3, 0, 1, 2);
 
     auto *telemetryTitle = new QLabel("Live Performance", central);
     QFont telemetryFont = telemetryTitle->font();
@@ -468,16 +471,18 @@ void MainWindow::showHistoryDialog()
     }
 
     connect(combo, &QComboBox::currentTextChanged, &dialog, [refreshHistory]() { refreshHistory(); });
-    connect(exportButton, &QPushButton::clicked, &dialog, [this, &dialog, combo]() {
+    connect(exportButton, &QPushButton::clicked, &dialog, [&dialog, combo]() {
         const QString game = combo->currentText();
         const QVector<HistorySample> samples = PerformanceHistory::loadSamples(game, 7200);
         if (samples.isEmpty())
             return;
 
+        QString fileStem = game;
+        fileStem.replace(' ', '_');
         const QString path = QFileDialog::getSaveFileName(
             &dialog,
             "Export GameFix Performance History",
-            QString("%1-GameFix-History.csv").arg(game.replace(' ', '_')),
+            QString("%1-GameFix-History.csv").arg(fileStem),
             "CSV files (*.csv);;All files (*.*)");
         if (path.isEmpty())
             return;
@@ -499,20 +504,17 @@ void MainWindow::showHistoryDialog()
                    << '\n';
         }
     });
-    connect(clearButton, &QPushButton::clicked, &dialog, [this, &dialog, combo, refreshHistory]() {
+    connect(clearButton, &QPushButton::clicked, &dialog, [combo, refreshHistory]() {
         if (combo->currentText().isEmpty())
             return;
-        if (QMessageBox::question(&dialog, "Clear History",
+        if (QMessageBox::question(nullptr, "Clear History",
                                   QString("Delete all saved performance samples for %1?").arg(combo->currentText())) != QMessageBox::Yes)
             return;
-        if (PerformanceHistory::clearGame(combo->currentText())) {
+        const QString game = combo->currentText();
+        if (PerformanceHistory::clearGame(game)) {
             combo->removeItem(combo->currentIndex());
-            if (combo->count() == 0) {
-                QMessageBox::information(&dialog, "History Cleared", "The selected history was deleted.");
-                dialog.accept();
-            } else {
+            if (combo->count() > 0)
                 refreshHistory();
-            }
         }
     });
     connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
