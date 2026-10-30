@@ -79,7 +79,7 @@ bool deleteValue(HKEY root, const wchar_t *subKey, const wchar_t *valueName)
     if (RegOpenKeyExW(root, subKey, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS)
         return false;
     const LONG status = RegDeleteValueW(key, valueName);
-    RegCloseHandle(key);
+    RegCloseKey(key);
     return status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND;
 }
 #endif
