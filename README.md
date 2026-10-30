@@ -4,7 +4,7 @@ A Windows gaming diagnostics and troubleshooting utility built with **Qt 6 + C++
 
 ## Current status
 
-**v0.2.0** adds a live, read-only performance dashboard. GameFix now samples CPU usage, GPU utilization, system RAM, dedicated GPU memory, and NVIDIA GPU temperature when the NVIDIA driver exposes NVML. It also provides a heuristic bottleneck explanation based on the current readings.
+**v0.3.0** adds the first full diagnostic pass on top of the live performance dashboard. The dashboard is responsive and can scroll when the window is resized smaller, so diagnostic text is not clipped.
 
 ## Current diagnostics
 
@@ -14,18 +14,27 @@ A Windows gaming diagnostics and troubleshooting utility built with **Qt 6 + C++
 - Live system memory usage
 - Dedicated GPU memory usage through DXGI
 - NVIDIA GPU temperature when NVML is available
-- Basic CPU/GPU/RAM/VRAM bottleneck analysis
+- CPU/GPU/RAM/VRAM bottleneck analysis
+- Running game detection for common PC/VR games
+- Internet latency testing against 1.1.1.1
+- Packet-loss measurement and latency variation reporting
+- Fixed-drive free-space inspection
+- Current physical-disk activity sampling
+- One-shot full diagnostic report with warnings and recommendations
+- Resizable, scrollable dashboard and report viewer
 
-## Planned diagnostics
+The full diagnostic is read-only. It does not modify Windows settings, registry values, firewall rules, power plans, or game files.
 
-- Storage activity
-- Network latency, jitter, and packet loss
-- Running game detection
-- Per-game performance analysis
+## Planned next steps
+
+- Per-game performance history and capture
+- More robust game identification
+- CPU temperature and per-core utilization where reliable APIs are available
+- Network adapter/link diagnostics
 - Safe, user-approved Windows gaming fixes
 - Reversible configuration changes
 
-GameFix will focus on explaining **why** a game is performing poorly instead of applying opaque "FPS boost" tweaks.
+GameFix focuses on explaining **why** a game is performing poorly instead of applying opaque "FPS boost" tweaks.
 
 ## Build
 
