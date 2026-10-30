@@ -12,8 +12,9 @@
 #include <tlhelp32.h>
 #endif
 
+#include <QStringList>
+
 #include <algorithm>
-#include <cmath>
 
 #ifdef Q_OS_WIN
 namespace
@@ -25,7 +26,7 @@ QString processNameFromPid(DWORD pid)
         return {};
 
     wchar_t path[32768]{};
-    DWORD length = static_cast<DWORD>(std::size(path));
+    DWORD length = 32768;
     QString result;
     if (QueryFullProcessImageNameW(process, 0, path, &length))
         result = QString::fromWCharArray(path, static_cast<int>(length));
